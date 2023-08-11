@@ -18,7 +18,7 @@ class SemesterRegistrationsController < ApplicationController
   # GET /registrations/1/edit
   def edit
     # @course_registrations = semester_registration.course_registrations.where(year: current_student.year, semester: current_student.semester)
-
+   
     @registration_fee = CollegePayment.where(study_level: @semester_registration.study_level,admission_type: @semester_registration.admission_type).first.registration_fee 
     
     if current_student.year == 1 && current_student.semester == 1

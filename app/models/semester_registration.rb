@@ -1,8 +1,10 @@
 class SemesterRegistration < ApplicationRecord
 	after_save :change_course_registration_status
 	after_save :assign_section_to_course_registration
-	after_save :semester_course_registration
+	after_save :semester_course_registration 
+	# :if => (registrar_approval_status=="approve" && finance_approval_status=="approve")
 	after_save :generate_invoice
+	after_save :add_admission_date
 	##validations
 	  # validates :semester, :presence => true
 		# validates :year, :presence => true
@@ -57,9 +59,8 @@ class SemesterRegistration < ApplicationRecord
 						if ((self.course_registrations.joins(:student_grade).pluck(:letter_grade).include?("I")) || (self.course_registrations.joins(:student_grade).pluck(:letter_grade).include?("NG")))
 							report.academic_status = "Incomplete"
 						else
-							p report.cgpa
 							report.academic_status = self.student.program.grade_systems.last.academic_statuses.where("min_value < ?", report.cgpa).where("max_value >= ?", report.cgpa).last.status
-							if (report.academic_status != "Dismissal") || (report.academic_status != "Incomplete")
+							if (report.academic_status.strip != "Dismissal") || (report.academic_status.strip != "Incomplete")
 								if self.program.program_semester > self.student.semester
 									promoted_semester = self.student.semester + 1
 									self.student.update_columns(semester: promoted_semester)
@@ -99,7 +100,19 @@ class SemesterRegistration < ApplicationRecord
 				end
 			end
   	end
+
+	def approve_enrollment_status
+		if self.finance_approval_status == "approved" && self.registrar_approval_status=="approved"
+	 	  self.course_registrations.update(enrollment_status: 'approved')
+		end
+	end
+	
   	private	
+	    def add_admission_date
+			if self.semester == 1 && self.year == 1
+				self.student.update(admission_date: Date.current)
+			end
+		end
 	  	def generate_invoice
 	  		if self.mode_of_payment.present? && self.invoices.where(year: self.year, semester: self.semester).empty?
 	  			Invoice.create do |invoice|
@@ -160,12 +173,11 @@ class SemesterRegistration < ApplicationRecord
 	  		end
 	  	end
 	  	def semester_course_registration
-		  	self.program.curriculums.where(curriculum_version: self.student.curriculum_version).last.courses.where(year: self.year, semester: self.semester).each do |co|
-		  		p "=========================="
-				p self.id
-				p "=========================="
+	     	if self.finance_approval_status == "pending" && self.registrar_approval_status=="pending"
 
-				CourseRegistration.create do |course_registration|
+		  	self.program.curriculums.where(curriculum_version: self.student.curriculum_version).last.courses.where(year: self.year, semester: self.semester).each do |co|
+		 
+			 	CourseRegistration.create do |course_registration|
 		  			course_registration.semester_registration_id = self.id
 		  			course_registration.program_id = self.program.id
 		  			course_registration.department_id = self.department.id
@@ -173,13 +185,15 @@ class SemesterRegistration < ApplicationRecord
 		  			course_registration.student_id = self.student.id
 		  			course_registration.student_full_name = self.student_full_name
 		  			course_registration.course_id = co.id
+					course_registration.academic_year = get_academic_year(self.semester, self.student)
 		  			course_registration.course_title = co.course_title
 		  			course_registration.semester = self.semester
-						course_registration.year = self.year
+					course_registration.year = self.year
 		  			# course_registration.course_section_id = CourseSection.first.id
 		  			course_registration.created_by = self.created_by
 				  end
 				end
+			end
 	  	end
 
 	  	def change_course_registration_status
@@ -187,6 +201,14 @@ class SemesterRegistration < ApplicationRecord
 	  			self.course_registrations.where(enrollment_status: "pending").map{|course| course.update_columns(enrollment_status: "enrolled")}
 	  		end
 	  	end
+
+		def get_academic_year(semester, student)
+			if semester == 1
+				Date.current.year
+			else
+              CourseRegistration.select(:academic_year).where(student: student).where(semester: 1).last.academic_year
+			end
+		end
 
 	  	def assign_section_to_course_registration
 	  		if (self.registrar_approval_status == "approved") && self.section.present? 
